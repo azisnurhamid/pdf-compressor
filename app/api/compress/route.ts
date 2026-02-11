@@ -2,6 +2,8 @@ import { content } from '../../../src/content/content';
 import { compressPdf } from '../../../src/lib/pdf-compressor';
 import { clampTargetSizeBytes, normalizeTargetSizeUnit, parseTargetSize, validatePdfCandidate } from '../../../src/lib/pdf-validation';
 
+export const runtime = 'edge';
+
 const createErrorResponse = (message: string, status: number) => {
   const body = {
     [content.response.errorKey]: message
