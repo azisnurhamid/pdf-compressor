@@ -3,11 +3,12 @@
   "version": "1.0.0",
   "private": true,
   "scripts": {
-  "dev": "next dev",
-  "build": "next build",
-  "start": "next start",
-  "pages:build": "npx @cloudflare/next-on-pages"
-},
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "pages:build": "npx @cloudflare/next-on-pages",
+    "postinstall": "patch-package"
+  },
   "dependencies": {
     "next": "latest",
     "qpdf-wasm-esm-embedded": "1.1.1",
@@ -19,6 +20,7 @@
     "@types/node": "latest",
     "@types/react": "latest",
     "@types/react-dom": "latest",
+    "patch-package": "^8.0.1",
     "typescript": "latest"
   }
 }
