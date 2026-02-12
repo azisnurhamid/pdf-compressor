@@ -2,6 +2,7 @@
 
 import { FormEvent, useEffect, useMemo, useState } from 'react';
 import { content } from '../src/content/content';
+import { compressPdf } from '../src/lib/pdf-compressor';
 import {
   clampTargetSizeBytes,
   getTargetSizeBounds,
@@ -77,47 +78,6 @@ const formatSavedPercent = (originalSize: number, compressedSize: number) => {
 
 const formatSavedBytes = (originalSize: number, compressedSize: number) => {
   return formatBytes(Math.max(originalSize - compressedSize, 0));
-};
-
-const parseHeaderSize = (rawValue: string | null, fallbackValue: number) => {
-  if (!rawValue) {
-    return fallbackValue;
-  }
-
-  const parsedValue = Number.parseInt(rawValue, 10);
-
-  if (Number.isNaN(parsedValue) || parsedValue < 0) {
-    return fallbackValue;
-  }
-
-  return parsedValue;
-};
-
-const parseTargetAchievedHeader = (rawValue: string | null, fallbackValue: boolean) => {
-  if (rawValue === content.response.booleanTrue) {
-    return true;
-  }
-
-  if (rawValue === content.response.booleanFalse) {
-    return false;
-  }
-
-  return fallbackValue;
-};
-
-const readApiError = async (response: Response) => {
-  try {
-    const payload = (await response.json()) as Record<string, unknown>;
-    const message = payload[content.response.errorKey];
-
-    if (typeof message === 'string' && message.length > 0) {
-      return message;
-    }
-
-    return content.errors.unknown;
-  } catch {
-    return content.errors.unknown;
-  }
 };
 
 export default function HomePage() {
@@ -245,38 +205,19 @@ export default function HomePage() {
     setTargetSizeInput(normalizedTargetSizeInput);
 
     try {
-      const formData = new FormData();
-      formData.append(content.form.fieldNames.file, selectedFile);
-      formData.append(content.form.fieldNames.targetSizeValue, normalizedTargetSizeInput);
-      formData.append(content.form.fieldNames.targetSizeUnit, targetSizeUnit);
-
-      const response = await fetch(content.urls.compressApi, {
-        method: content.http.postMethod,
-        body: formData,
-        cache: content.http.noStoreCache
+      const inputPdf = new Uint8Array(await selectedFile.arrayBuffer());
+      const compressionResult = await compressPdf(inputPdf, {
+        targetSizeBytes: clampedTargetSizeBytes
       });
-
-      if (!response.ok) {
-        const responseError = await readApiError(response);
-        setErrorMessage(responseError);
-        return;
-      }
-
-      const pdfBlob = await response.blob();
+      const pdfBlob = new Blob([compressionResult.pdfBuffer as Uint8Array<ArrayBuffer>], {
+        type: content.mimeTypes.pdf
+      });
       const nextDownloadUrl = URL.createObjectURL(pdfBlob);
-      const resolvedOriginalSize = parseHeaderSize(response.headers.get(content.headers.originalSize), selectedFile.size);
-      const resolvedCompressedSize = parseHeaderSize(response.headers.get(content.headers.compressedSize), pdfBlob.size);
-      const resolvedRequestedTargetSizeBytes = parseHeaderSize(
-        response.headers.get(content.headers.requestedTargetSizeBytes),
-        clampedTargetSizeBytes
-      );
-      const fallbackTargetAchieved = resolvedRequestedTargetSizeBytes <= 0 || resolvedCompressedSize <= resolvedRequestedTargetSizeBytes;
-      const resolvedTargetAchieved = parseTargetAchievedHeader(response.headers.get(content.headers.targetAchieved), fallbackTargetAchieved);
 
-      setOriginalSize(resolvedOriginalSize);
-      setCompressedSize(resolvedCompressedSize);
-      setRequestedTargetSizeBytes(resolvedRequestedTargetSizeBytes);
-      setTargetAchieved(resolvedTargetAchieved);
+      setOriginalSize(compressionResult.originalSize);
+      setCompressedSize(compressionResult.compressedSize);
+      setRequestedTargetSizeBytes(compressionResult.requestedTargetSizeBytes);
+      setTargetAchieved(compressionResult.targetAchieved);
       setDownloadUrl(nextDownloadUrl);
     } catch {
       setErrorMessage(content.errors.compressionFailed);
