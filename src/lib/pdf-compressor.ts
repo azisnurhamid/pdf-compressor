@@ -31,9 +31,18 @@ type CompressionResult = {
   targetAchieved: boolean;
 };
 
+type ProfileRunSummary = {
+  matchedTargetResult: CompressionAttemptResult | null;
+  smallestResult: CompressionAttemptResult;
+};
+
 const qpdfFactory = createQpdf as unknown as QpdfFactory;
 
 let qpdfModulePromise: Promise<QpdfModule> | null = null;
+
+const bytesPerMegabyte = 1024 * 1024;
+const largePdfThresholdBytes = 20 * bytesPerMegabyte;
+const maxProfilesForLargePdf = 2;
 
 const getQpdfModule = () => {
   if (!qpdfModulePromise) {
@@ -86,34 +95,57 @@ const runCompressionAttempt = (qpdfModule: QpdfModule, inputPdf: Uint8Array, pro
   }
 };
 
-const pickBestResult = (results: CompressionAttemptResult[], targetSize: number) => {
-  const targetMatches = results.filter((result) => result.compressedSize <= targetSize);
-
-  if (targetMatches.length > 0) {
-    return targetMatches.reduce((bestResult, currentResult) => {
-      return currentResult.compressedSize > bestResult.compressedSize ? currentResult : bestResult;
-    });
-  }
-
-  return results.reduce((bestResult, currentResult) => {
-    return currentResult.compressedSize < bestResult.compressedSize ? currentResult : bestResult;
-  });
-};
-
 const pickSmallestResult = (results: CompressionAttemptResult[]) => {
   return results.reduce((bestResult, currentResult) => {
     return currentResult.compressedSize < bestResult.compressedSize ? currentResult : bestResult;
   });
 };
 
+const getProfileArgsList = (inputPdfSize: number, requestedTargetSizeBytes: number) => {
+  const allProfiles = content.compression.profiles.map((profile) => profile.args);
+
+  if (requestedTargetSizeBytes > 0 && inputPdfSize >= largePdfThresholdBytes) {
+    return allProfiles.slice(0, maxProfilesForLargePdf);
+  }
+
+  return allProfiles;
+};
+
+const runProfiles = (
+  qpdfModule: QpdfModule,
+  inputPdf: Uint8Array,
+  requestedTargetSizeBytes: number
+): ProfileRunSummary => {
+  const profileArgsList = getProfileArgsList(inputPdf.length, requestedTargetSizeBytes);
+  const results: CompressionAttemptResult[] = [];
+
+  for (const profileArgs of profileArgsList) {
+    const currentResult = runCompressionAttempt(qpdfModule, inputPdf, profileArgs);
+    results.push(currentResult);
+
+    // Profiles are ordered from lighter to stronger compression; first hit
+    // generally preserves the best size under target while saving compute time.
+    if (requestedTargetSizeBytes > 0 && currentResult.compressedSize <= requestedTargetSizeBytes) {
+      return {
+        matchedTargetResult: currentResult,
+        smallestResult: pickSmallestResult(results)
+      };
+    }
+  }
+
+  return {
+    matchedTargetResult: null,
+    smallestResult: pickSmallestResult(results)
+  };
+};
+
 export const compressPdf = async (inputPdf: Uint8Array, options: CompressionRequestOptions): Promise<CompressionResult> => {
   const qpdfModule = await getQpdfModule();
   const requestedTargetSizeBytes = Math.max(Math.floor(options.targetSizeBytes), 0);
-  const profileArgsList = content.compression.profiles.map((profile) => profile.args);
-  const results = profileArgsList.map((profileArgs) => runCompressionAttempt(qpdfModule, inputPdf, profileArgs));
+  const profileRunSummary = runProfiles(qpdfModule, inputPdf, requestedTargetSizeBytes);
 
   if (requestedTargetSizeBytes <= 0) {
-    const bestResult = pickSmallestResult(results);
+    const bestResult = profileRunSummary.smallestResult;
 
     return {
       compressedSize: bestResult.compressedSize,
@@ -124,13 +156,13 @@ export const compressPdf = async (inputPdf: Uint8Array, options: CompressionRequ
     };
   }
 
-  const bestResult = pickBestResult(results, requestedTargetSizeBytes);
+  const bestResult = profileRunSummary.matchedTargetResult ?? profileRunSummary.smallestResult;
 
   return {
     compressedSize: bestResult.compressedSize,
     originalSize: inputPdf.length,
     pdfBuffer: bestResult.pdfBuffer,
     requestedTargetSizeBytes,
-    targetAchieved: bestResult.compressedSize <= requestedTargetSizeBytes
+    targetAchieved: profileRunSummary.matchedTargetResult !== null
   };
 };

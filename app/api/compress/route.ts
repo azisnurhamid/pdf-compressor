@@ -26,6 +26,38 @@ const stringifyBoolean = (value: boolean) => {
   return value ? content.response.booleanTrue : content.response.booleanFalse;
 };
 
+const extractErrorMessage = (error: unknown) => {
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  if (typeof error === 'object' && error !== null && 'message' in error) {
+    const message = (error as { message?: unknown }).message;
+
+    if (typeof message === 'string') {
+      return message;
+    }
+  }
+
+  return '';
+};
+
+const toCompressionErrorMessage = (error: unknown) => {
+  const normalizedMessage = extractErrorMessage(error).toLowerCase();
+  const looksLikeResourceLimitError =
+    normalizedMessage.includes('memory') ||
+    normalizedMessage.includes('out of bounds') ||
+    normalizedMessage.includes('cpu') ||
+    normalizedMessage.includes('timed out') ||
+    normalizedMessage.includes('exceeded');
+
+  if (looksLikeResourceLimitError) {
+    return content.errors.processingLimitReached;
+  }
+
+  return content.errors.compressionFailed;
+};
+
 export async function POST(request: Request) {
   try {
     const formData = await request.formData();
@@ -69,9 +101,7 @@ export async function POST(request: Request) {
     const compressionResult = await compressPdf(inputPdf, {
       targetSizeBytes: clampedTargetSizeBytes
     });
-    const responseBytes = new Uint8Array(compressionResult.pdfBuffer.byteLength);
-    responseBytes.set(compressionResult.pdfBuffer);
-    const responseBody = new Blob([responseBytes.buffer], {
+    const responseBody = new Blob([compressionResult.pdfBuffer as Uint8Array<ArrayBuffer>], {
       type: content.mimeTypes.pdf
     });
 
@@ -87,7 +117,8 @@ export async function POST(request: Request) {
         [content.headers.targetAchieved]: stringifyBoolean(compressionResult.targetAchieved)
       }
     });
-  } catch {
-    return createErrorResponse(content.errors.compressionFailed, 500);
+  } catch (error) {
+    console.error('[api/compress] failed to compress PDF', error);
+    return createErrorResponse(toCompressionErrorMessage(error), 500);
   }
 }

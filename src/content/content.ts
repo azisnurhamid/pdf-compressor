@@ -118,6 +118,7 @@ export const content = {
     invalidType: 'Tipe file tidak didukung. Gunakan file PDF.',
     invalidExtension: 'Ekstensi file harus .pdf.',
     invalidTargetSize: 'Target ukuran akhir tidak valid.',
+    processingLimitReached: 'Server cloud mencapai batas resource. Coba target ukuran lebih besar atau gunakan PDF yang lebih kecil.',
     compressionFailed: 'Gagal memproses kompresi PDF.',
     unknown: 'Terjadi kesalahan yang tidak diketahui.'
   },
