@@ -2,7 +2,7 @@
 
 import { FormEvent, useEffect, useMemo, useState } from 'react';
 import { content } from '../src/content/content';
-import { compressPdf } from '../src/lib/pdf-compressor';
+import { compressPdf, type CompressionMode } from '../src/lib/pdf-compressor';
 import {
   clampTargetSizeBytes,
   getTargetSizeBounds,
@@ -15,6 +15,7 @@ import {
 const bytesPerKilobyte = 1024;
 const bytesPerMegabyte = bytesPerKilobyte * bytesPerKilobyte;
 const decimalPlaces = 2;
+const byteFormatter = new Intl.NumberFormat(content.metadata.language);
 
 const formatBytes = (bytes: number) => {
   if (bytes < bytesPerKilobyte) {
@@ -26,6 +27,18 @@ const formatBytes = (bytes: number) => {
   }
 
   return `${(bytes / bytesPerMegabyte).toFixed(decimalPlaces)} ${content.formats.megabytesUnit}`;
+};
+
+const formatExactBytes = (bytes: number) => {
+  return `${byteFormatter.format(bytes)} ${content.formats.bytesUnit}`;
+};
+
+const formatBytesWithExact = (bytes: number) => {
+  if (bytes < bytesPerKilobyte) {
+    return formatExactBytes(bytes);
+  }
+
+  return `${formatBytes(bytes)} (${formatExactBytes(bytes)})`;
 };
 
 const getTargetUnitDivisor = (unit: TargetSizeUnit) => {
@@ -77,7 +90,7 @@ const formatSavedPercent = (originalSize: number, compressedSize: number) => {
 };
 
 const formatSavedBytes = (originalSize: number, compressedSize: number) => {
-  return formatBytes(Math.max(originalSize - compressedSize, 0));
+  return formatBytesWithExact(Math.max(originalSize - compressedSize, 0));
 };
 
 export default function HomePage() {
@@ -85,6 +98,7 @@ export default function HomePage() {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [targetSizeInput, setTargetSizeInput] = useState<string>(content.form.targetSizeDefaultValue);
   const [targetSizeUnit, setTargetSizeUnit] = useState<TargetSizeUnit>(content.form.targetSizeUnit.defaultValue);
+  const [compressionMode, setCompressionMode] = useState<CompressionMode>(content.form.compressionMode.defaultValue);
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
   const [downloadUrl, setDownloadUrl] = useState('');
@@ -92,6 +106,9 @@ export default function HomePage() {
   const [compressedSize, setCompressedSize] = useState(0);
   const [requestedTargetSizeBytes, setRequestedTargetSizeBytes] = useState(0);
   const [targetAchieved, setTargetAchieved] = useState(true);
+  const [lossyAttemptFailed, setLossyAttemptFailed] = useState(false);
+  const [lossyAttempted, setLossyAttempted] = useState(false);
+  const [usedLossyCompression, setUsedLossyCompression] = useState(false);
 
   const targetSizePreview = useMemo(() => {
     const parsedTarget = parseTargetSize(targetSizeInput, targetSizeUnit);
@@ -158,6 +175,9 @@ export default function HomePage() {
     setCompressedSize(0);
     setRequestedTargetSizeBytes(0);
     setTargetAchieved(true);
+    setLossyAttemptFailed(false);
+    setLossyAttempted(false);
+    setUsedLossyCompression(false);
   };
 
   const handleReset = () => {
@@ -165,6 +185,7 @@ export default function HomePage() {
     setSelectedFile(null);
     setTargetSizeInput(content.form.targetSizeDefaultValue);
     setTargetSizeUnit(content.form.targetSizeUnit.defaultValue);
+    setCompressionMode(content.form.compressionMode.defaultValue);
     setErrorMessage('');
     resetResultState();
     setInputKey((currentValue) => currentValue + 1);
@@ -207,17 +228,24 @@ export default function HomePage() {
     try {
       const inputPdf = new Uint8Array(await selectedFile.arrayBuffer());
       const compressionResult = await compressPdf(inputPdf, {
+        compressionMode,
         targetSizeBytes: clampedTargetSizeBytes
       });
       const pdfBlob = new Blob([compressionResult.pdfBuffer as Uint8Array<ArrayBuffer>], {
         type: content.mimeTypes.pdf
       });
+      const actualCompressedSize = pdfBlob.size;
       const nextDownloadUrl = URL.createObjectURL(pdfBlob);
 
       setOriginalSize(compressionResult.originalSize);
-      setCompressedSize(compressionResult.compressedSize);
+      setCompressedSize(actualCompressedSize);
       setRequestedTargetSizeBytes(compressionResult.requestedTargetSizeBytes);
-      setTargetAchieved(compressionResult.targetAchieved);
+      setTargetAchieved(
+        compressionResult.requestedTargetSizeBytes <= 0 ? true : actualCompressedSize <= compressionResult.requestedTargetSizeBytes
+      );
+      setLossyAttemptFailed(compressionResult.lossyAttemptFailed);
+      setLossyAttempted(compressionResult.lossyAttempted);
+      setUsedLossyCompression(compressionResult.usedLossyCompression);
       setDownloadUrl(nextDownloadUrl);
     } catch {
       setErrorMessage(content.errors.compressionFailed);
@@ -228,6 +256,16 @@ export default function HomePage() {
 
   const isResultReady = downloadUrl.length > 0;
   const statusText = errorMessage.length > 0 ? content.ui.statusError : isResultReady ? content.ui.statusSuccess : content.ui.statusReady;
+  const noReduction = isResultReady && originalSize > 0 && compressedSize >= originalSize;
+  const shouldShowLossyWarning = isResultReady && usedLossyCompression;
+  const shouldShowLossyNoGainWarning =
+    isResultReady &&
+    compressionMode === content.form.compressionMode.aggressiveValue &&
+    lossyAttempted &&
+    !usedLossyCompression &&
+    !lossyAttemptFailed;
+  const shouldShowLossyFailedWarning =
+    isResultReady && compressionMode === content.form.compressionMode.aggressiveValue && lossyAttempted && lossyAttemptFailed;
 
   return (
     <main className="page">
@@ -250,9 +288,18 @@ export default function HomePage() {
               onChange={(event) => {
                 const file = event.currentTarget.files ? event.currentTarget.files[0] : null;
                 setSelectedFile(file);
+                setCompressionMode(content.form.compressionMode.defaultValue);
                 setErrorMessage('');
                 clearDownloadUrl();
                 resetResultState();
+
+                if (!file) {
+                  setTargetSizeInput(content.form.targetSizeDefaultValue);
+                  return;
+                }
+
+                const defaultTargetSizeBytes = getTargetSizeBounds(file.size).maxTargetSizeBytes;
+                setTargetSizeInput(formatTargetSizeInput(defaultTargetSizeBytes, targetSizeUnit));
               }}
             />
           </label>
@@ -320,6 +367,27 @@ export default function HomePage() {
             <p className="levelDescription">{content.ui.targetSizeHint}</p>
           </label>
 
+          <label className="field" htmlFor={content.form.fieldNames.compressionMode}>
+            <span className="label">{content.ui.compressionModeLabel}</span>
+            <select
+              id={content.form.fieldNames.compressionMode}
+              aria-label={content.aria.compressionModeSelect}
+              className="input"
+              value={compressionMode}
+              onChange={(event) => {
+                const nextMode = event.currentTarget.value === content.form.compressionMode.standardValue
+                  ? content.form.compressionMode.standardValue
+                  : content.form.compressionMode.aggressiveValue;
+                setCompressionMode(nextMode);
+                setErrorMessage('');
+              }}
+            >
+              <option value={content.form.compressionMode.aggressiveValue}>{content.ui.compressionModeAggressive}</option>
+              <option value={content.form.compressionMode.standardValue}>{content.ui.compressionModeStandard}</option>
+            </select>
+            <p className="levelDescription">{content.ui.compressionModeHint}</p>
+          </label>
+
           <div className="metaGrid">
             <p className="metaItem">
               <span>{content.ui.selectedFileLabel}</span>
@@ -327,7 +395,7 @@ export default function HomePage() {
             </p>
             <p className="metaItem">
               <span>{content.ui.uploadedOriginalSizeLabel}</span>
-              <strong>{selectedFile ? formatBytes(selectedFile.size) : content.ui.noFileText}</strong>
+              <strong>{selectedFile ? formatBytesWithExact(selectedFile.size) : content.ui.noFileText}</strong>
             </p>
             <p className="metaItem">
               <span>{content.ui.selectedTargetLabel}</span>
@@ -363,11 +431,11 @@ export default function HomePage() {
             <div className="resultGrid">
               <p className="metaItem">
                 <span>{content.ui.originalSizeLabel}</span>
-                <strong>{formatBytes(originalSize)}</strong>
+                <strong>{formatBytesWithExact(originalSize)}</strong>
               </p>
               <p className="metaItem">
                 <span>{content.ui.compressedSizeLabel}</span>
-                <strong>{formatBytes(compressedSize)}</strong>
+                <strong>{formatBytesWithExact(compressedSize)}</strong>
               </p>
               <p className="metaItem">
                 <span>{content.ui.savedSizeLabel}</span>
@@ -379,7 +447,7 @@ export default function HomePage() {
               </p>
               <p className="metaItem">
                 <span>{content.ui.requestedTargetSizeLabel}</span>
-                <strong>{formatBytes(requestedTargetSizeBytes)}</strong>
+                <strong>{formatBytesWithExact(requestedTargetSizeBytes)}</strong>
               </p>
             </div>
 
@@ -388,6 +456,11 @@ export default function HomePage() {
                 {targetAchieved ? content.ui.targetReached : content.ui.targetNotReached}
               </p>
             ) : null}
+
+            {shouldShowLossyWarning ? <p className="targetStatus targetStatusWarning">{content.ui.lossyModeApplied}</p> : null}
+            {shouldShowLossyNoGainWarning ? <p className="targetStatus targetStatusWarning">{content.ui.lossyModeNoGain}</p> : null}
+            {shouldShowLossyFailedWarning ? <p className="targetStatus targetStatusWarning">{content.ui.lossyModeFailed}</p> : null}
+            {noReduction ? <p className="targetStatus targetStatusWarning">{content.ui.noReductionWarning}</p> : null}
 
             <a className="button primaryButton" href={downloadUrl} download={content.file.outputFallbackName} aria-label={content.aria.downloadButton}>
               {content.ui.downloadButton}

@@ -2,7 +2,7 @@ export const content = {
   metadata: {
     language: 'id',
     title: 'Compress PDF',
-    description: 'Kompres file PDF dengan cepat tanpa mengubah teks menjadi gambar.'
+    description: 'Kompres file PDF dengan cepat menggunakan mode standar (lossless) atau agresif (lossy).'
   },
   urls: {
     compressApi: '/api/compress'
@@ -28,7 +28,8 @@ export const content = {
     fieldNames: {
       file: 'pdfFile',
       targetSizeValue: 'targetSizeValue',
-      targetSizeUnit: 'targetSizeUnit'
+      targetSizeUnit: 'targetSizeUnit',
+      compressionMode: 'compressionMode'
     },
     accept: '.pdf,application/pdf',
     targetSizeDefaultValue: '0',
@@ -41,6 +42,11 @@ export const content = {
       defaultValue: 'mb',
       kilobytesValue: 'kb',
       megabytesValue: 'mb'
+    },
+    compressionMode: {
+      defaultValue: 'aggressive',
+      standardValue: 'standard',
+      aggressiveValue: 'aggressive'
     }
   },
   file: {
@@ -80,17 +86,24 @@ export const content = {
       },
       {
         args: ['--compression-level=9', '--object-streams=generate', '--normalize-content=y']
+      },
+      {
+        args: ['--compression-level=9', '--object-streams=generate', '--normalize-content=y', '--optimize-images']
       }
     ],
     baseArgs: ['--compress-streams=y', '--stream-data=compress', '--recompress-flate']
   },
   ui: {
     pageTitle: 'Compress PDF',
-    pageDescription: 'Unggah PDF, pilih satuan KB atau MB, tentukan ukuran akhir, lalu unduh hasilnya.',
+    pageDescription: 'Unggah PDF, pilih mode kompresi, tentukan ukuran hasil, lalu unduh hasilnya.',
     fileInputLabel: 'File PDF',
-    targetSizeLabel: 'Target Ukuran Akhir',
+    targetSizeLabel: 'Target Ukuran Hasil',
+    compressionModeLabel: 'Mode Kompresi',
+    compressionModeHint: 'Mode Agresif menurunkan kualitas gambar agar ukuran file lebih kecil.',
+    compressionModeStandard: 'Standar (Lossless)',
+    compressionModeAggressive: 'Agresif (Lossy)',
     targetUnitLabel: 'Satuan Ukuran Target',
-    targetSizeHint: 'Pilih satuan KB atau MB lalu isi ukuran file akhir dalam rentang yang valid.',
+    targetSizeHint: 'Pilih satuan KB atau MB lalu isi ukuran file hasil dalam rentang yang valid.',
     allowedRangeLabel: 'Rentang Kompres Valid',
     submitIdle: 'Kompres PDF',
     submitLoading: 'Sedang Memproses',
@@ -101,7 +114,7 @@ export const content = {
     compressedSizeLabel: 'Ukuran Hasil',
     savedSizeLabel: 'Penghematan',
     compressionPercentageLabel: 'Persentase Kompres',
-    requestedTargetSizeLabel: 'Target Ukuran Akhir',
+    requestedTargetSizeLabel: 'Target Ukuran Hasil',
     selectedFileLabel: 'File Terpilih',
     uploadedOriginalSizeLabel: 'Ukuran PDF Asli Upload',
     selectedTargetLabel: 'Target Saat Ini',
@@ -110,22 +123,27 @@ export const content = {
     statusSuccess: 'Kompresi selesai',
     statusError: 'Terjadi kesalahan',
     noFileText: 'Belum ada file dipilih.',
-    targetReached: 'Target ukuran akhir tercapai.',
-    targetNotReached: 'Target ukuran akhir belum tercapai, hasil terbaik yang tersedia telah diberikan.'
+    targetReached: 'Target ukuran hasil tercapai.',
+    targetNotReached: 'Target ukuran hasil belum tercapai, hasil terbaik yang tersedia telah diberikan.',
+    noReductionWarning: 'PDF tidak bisa diperkecil lagi dengan metode kompresi saat ini. File hasil tetap sama dengan file asli.',
+    lossyModeApplied: 'Mode Agresif dipakai. Beberapa halaman bisa terlihat lebih blur karena kualitas gambar diturunkan.',
+    lossyModeNoGain: 'Mode Agresif sudah dicoba, tetapi browser tidak menghasilkan ukuran yang lebih kecil dari file asli.',
+    lossyModeFailed: 'Mode Agresif gagal diproses di browser ini. Silakan coba browser lain atau gunakan mode Standar.'
   },
   errors: {
     fileMissing: 'File PDF wajib diunggah.',
     invalidType: 'Tipe file tidak didukung. Gunakan file PDF.',
     invalidExtension: 'Ekstensi file harus .pdf.',
-    invalidTargetSize: 'Target ukuran akhir tidak valid.',
+    invalidTargetSize: 'Target ukuran hasil tidak valid.',
     processingLimitReached: 'Server cloud mencapai batas resource. Coba target ukuran lebih besar atau gunakan PDF yang lebih kecil.',
     compressionFailed: 'Gagal memproses kompresi PDF.',
     unknown: 'Terjadi kesalahan yang tidak diketahui.'
   },
   aria: {
     fileInput: 'Unggah file PDF',
-    targetSizeInput: 'Masukkan target ukuran akhir',
-    targetUnitSelect: 'Pilih satuan target ukuran akhir',
+    targetSizeInput: 'Masukkan target ukuran hasil',
+    targetUnitSelect: 'Pilih satuan target ukuran hasil',
+    compressionModeSelect: 'Pilih mode kompresi PDF',
     submitButton: 'Proses kompresi PDF',
     resetButton: 'Reset form kompresi',
     downloadButton: 'Unduh hasil PDF terkompresi'

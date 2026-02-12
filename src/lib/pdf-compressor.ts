@@ -15,8 +15,11 @@ type QpdfModule = {
 type QpdfFactory = () => Promise<QpdfModule>;
 
 type CompressionRequestOptions = {
+  compressionMode: CompressionMode;
   targetSizeBytes: number;
 };
+
+export type CompressionMode = typeof content.form.compressionMode.standardValue | typeof content.form.compressionMode.aggressiveValue;
 
 type CompressionAttemptResult = {
   compressedSize: number;
@@ -25,10 +28,13 @@ type CompressionAttemptResult = {
 
 type CompressionResult = {
   compressedSize: number;
+  lossyAttemptFailed: boolean;
+  lossyAttempted: boolean;
   originalSize: number;
   pdfBuffer: Uint8Array;
   requestedTargetSizeBytes: number;
   targetAchieved: boolean;
+  usedLossyCompression: boolean;
 };
 
 type ProfileRunSummary = {
@@ -39,10 +45,6 @@ type ProfileRunSummary = {
 const qpdfFactory = createQpdf as unknown as QpdfFactory;
 
 let qpdfModulePromise: Promise<QpdfModule> | null = null;
-
-const bytesPerMegabyte = 1024 * 1024;
-const largePdfThresholdBytes = 20 * bytesPerMegabyte;
-const maxProfilesForLargePdf = 2;
 
 const getQpdfModule = () => {
   if (!qpdfModulePromise) {
@@ -101,14 +103,8 @@ const pickSmallestResult = (results: CompressionAttemptResult[]) => {
   });
 };
 
-const getProfileArgsList = (inputPdfSize: number, requestedTargetSizeBytes: number) => {
-  const allProfiles = content.compression.profiles.map((profile) => profile.args);
-
-  if (requestedTargetSizeBytes > 0 && inputPdfSize >= largePdfThresholdBytes) {
-    return allProfiles.slice(0, maxProfilesForLargePdf);
-  }
-
-  return allProfiles;
+const getProfileArgsList = () => {
+  return content.compression.profiles.map((profile) => profile.args);
 };
 
 const runProfiles = (
@@ -116,7 +112,7 @@ const runProfiles = (
   inputPdf: Uint8Array,
   requestedTargetSizeBytes: number
 ): ProfileRunSummary => {
-  const profileArgsList = getProfileArgsList(inputPdf.length, requestedTargetSizeBytes);
+  const profileArgsList = getProfileArgsList();
   const results: CompressionAttemptResult[] = [];
 
   for (const profileArgs of profileArgsList) {
@@ -149,20 +145,50 @@ export const compressPdf = async (inputPdf: Uint8Array, options: CompressionRequ
 
     return {
       compressedSize: bestResult.compressedSize,
+      lossyAttemptFailed: false,
+      lossyAttempted: false,
       originalSize: inputPdf.length,
       pdfBuffer: bestResult.pdfBuffer,
       requestedTargetSizeBytes,
-      targetAchieved: true
+      targetAchieved: true,
+      usedLossyCompression: false
     };
   }
 
-  const bestResult = profileRunSummary.matchedTargetResult ?? profileRunSummary.smallestResult;
+  const qpdfBestResult = profileRunSummary.matchedTargetResult ?? profileRunSummary.smallestResult;
+  let finalResult = qpdfBestResult;
+  let lossyAttemptFailed = false;
+  let lossyAttempted = false;
+  let usedLossyCompression = false;
+  const shouldTryLossy =
+    options.compressionMode === content.form.compressionMode.aggressiveValue && qpdfBestResult.compressedSize > requestedTargetSizeBytes;
+
+  if (shouldTryLossy) {
+    lossyAttempted = true;
+    try {
+      const { compressPdfLossy } = await import('./pdf-lossy-compressor');
+      const lossyPdfBuffer = await compressPdfLossy(qpdfBestResult.pdfBuffer, requestedTargetSizeBytes);
+
+      if (lossyPdfBuffer.length < finalResult.compressedSize) {
+        finalResult = {
+          compressedSize: lossyPdfBuffer.length,
+          pdfBuffer: lossyPdfBuffer
+        };
+        usedLossyCompression = true;
+      }
+    } catch {
+      lossyAttemptFailed = true;
+    }
+  }
 
   return {
-    compressedSize: bestResult.compressedSize,
+    compressedSize: finalResult.compressedSize,
+    lossyAttemptFailed,
+    lossyAttempted,
     originalSize: inputPdf.length,
-    pdfBuffer: bestResult.pdfBuffer,
+    pdfBuffer: finalResult.pdfBuffer,
     requestedTargetSizeBytes,
-    targetAchieved: profileRunSummary.matchedTargetResult !== null
+    targetAchieved: finalResult.compressedSize <= requestedTargetSizeBytes,
+    usedLossyCompression
   };
 };

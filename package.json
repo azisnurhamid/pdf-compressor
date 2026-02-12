@@ -11,6 +11,8 @@
   },
   "dependencies": {
     "next": "latest",
+    "pdf-lib": "^1.17.1",
+    "pdfjs-dist": "^5.4.624",
     "qpdf-wasm-esm-embedded": "1.1.1",
     "react": "latest",
     "react-dom": "latest"
